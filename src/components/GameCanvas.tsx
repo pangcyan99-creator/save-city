@@ -5,12 +5,13 @@ import { audioManager } from '../utils/audio';
 interface GameCanvasProps {
   status: GameStatus;
   score: number;
+  level: number;
   onScoreUpdate: (points: number) => void;
   onGameEnd: (win: boolean) => void;
   onAmmoUpdate: (batteries: Battery[]) => void;
 }
 
-const GameCanvas: React.FC<GameCanvasProps> = ({ status, score, onScoreUpdate, onGameEnd, onAmmoUpdate }) => {
+const GameCanvas: React.FC<GameCanvasProps> = ({ status, score, level, onScoreUpdate, onGameEnd, onAmmoUpdate }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const requestRef = useRef<number>(null);
   
@@ -49,6 +50,11 @@ const GameCanvas: React.FC<GameCanvasProps> = ({ status, score, onScoreUpdate, o
     ];
     batteriesRef.current = batteries;
     onAmmoUpdate([...batteries]);
+
+    // Spawn initial rocket immediately after init
+    if (rocketsRef.current.length === 0) {
+      setTimeout(spawnRocket, 50); // Small delay to ensure dimensions are fully applied
+    }
   };
 
   useEffect(() => {
@@ -58,9 +64,8 @@ const GameCanvas: React.FC<GameCanvasProps> = ({ status, score, onScoreUpdate, o
         canvasRef.current.width = clientWidth;
         canvasRef.current.height = clientHeight;
         setDimensions({ width: clientWidth, height: clientHeight });
-        if (status === 'START' || status === 'PLAYING') {
-          initGame(clientWidth, clientHeight);
-        }
+        // Always init game objects if we have dimensions
+        initGame(clientWidth, clientHeight);
       }
     };
 
@@ -70,29 +75,55 @@ const GameCanvas: React.FC<GameCanvasProps> = ({ status, score, onScoreUpdate, o
   }, [status]);
 
   useEffect(() => {
-    if (status === 'PLAYING') {
+    if (status === 'PLAYING' || status === 'START') {
+      // Clear existing entities on level start
+      rocketsRef.current = [];
+      missilesRef.current = [];
+      explosionsRef.current = [];
+      
       // Spawn first rocket immediately
       spawnRocket();
     }
-  }, [status]);
+  }, [status, level]);
 
   const spawnRocket = () => {
-    if (status !== 'PLAYING') return;
-    const startX = Math.random() * dimensions.width;
-    const startY = -40;
+    if (status !== 'PLAYING' && status !== 'START') return;
+    if (dimensions.width <= 0) return;
+    
+    // Multi-angle spawn: start from top or sides
+    const side = Math.random();
+    let startX, startY;
+    
+    if (side < 0.7) {
+      // Top spawn
+      startX = Math.random() * dimensions.width;
+      startY = -40;
+    } else if (side < 0.85) {
+      // Left spawn
+      startX = -40;
+      startY = Math.random() * (dimensions.height * 0.4);
+    } else {
+      // Right spawn
+      startX = dimensions.width + 40;
+      startY = Math.random() * (dimensions.height * 0.4);
+    }
+
     const targets = [...citiesRef.current.filter(c => c.active), ...batteriesRef.current.filter(b => b.active)];
     if (targets.length === 0) return;
     
     const target = targets[Math.floor(Math.random() * targets.length)];
     
-    // Much slower flight time
-    const minT = 1200; 
-    const maxT = 2400; 
+    // Even slower flight time - using a more direct approach to avoid off-screen arcs
+    // Speed increases with level (T decreases)
+    const levelFactor = Math.pow(0.85, level - 1); // 15% faster each level
+    const minT = 400 * levelFactor; 
+    const maxT = 800 * levelFactor; 
     const scoreFactor = Math.min(score / 5000, 1);
     const T = (maxT - (maxT - minT) * scoreFactor) * (0.9 + Math.random() * 0.2);
 
+    // Use linear velocity for a more predictable slow descent
     const vx = (target.x - startX) / T;
-    const vy = (target.y - startY - 0.5 * GRAVITY * T * T) / T;
+    const vy = (target.y - startY) / T;
 
     const rocket: Rocket = {
       id: Math.random().toString(36).substr(2, 9),
@@ -105,7 +136,9 @@ const GameCanvas: React.FC<GameCanvasProps> = ({ status, score, onScoreUpdate, o
       vx,
       vy,
       angle: Math.atan2(target.y - startY, target.x - startX),
-      exhaust: []
+      exhaust: [],
+      hoverTimer: Math.random() < 0.3 ? 100 + Math.random() * 200 : 0, // 30% chance to hover
+      driftX: (Math.random() - 0.5) * 0.3
     };
     rocketsRef.current.push(rocket);
   };
@@ -132,6 +165,7 @@ const GameCanvas: React.FC<GameCanvasProps> = ({ status, score, onScoreUpdate, o
       radius: 0,
       maxRadius: 60,
       expanding: true,
+      kills: 0,
       type: 'FIREWORK',
       particles
     });
@@ -170,7 +204,7 @@ const GameCanvas: React.FC<GameCanvasProps> = ({ status, score, onScoreUpdate, o
         targetX,
         targetY,
         progress: 0,
-        speed: 0.025, // Slightly faster poop for easier hits
+        speed: 0.035, // Balanced speed for rockets
         batteryIndex: bestBattery
       };
       missilesRef.current.push(missile);
@@ -178,9 +212,16 @@ const GameCanvas: React.FC<GameCanvasProps> = ({ status, score, onScoreUpdate, o
   };
 
   const update = (time: number) => {
-    if (status !== 'PLAYING') return;
+    if (status !== 'PLAYING' && status !== 'START') return;
 
-    if (Math.random() < 0.02 + (score / 15000)) {
+    // Ensure at least one rocket is present, but limit total to keep it relaxed
+    const maxRockets = status === 'START' ? 3 : 8 + Math.floor(score / 2000);
+    
+    if (rocketsRef.current.length === 0 && dimensions.width > 0) {
+      spawnRocket();
+    }
+
+    if (rocketsRef.current.length < maxRockets && Math.random() < 0.01 + (score / 30000)) {
       spawnRocket();
     }
 
@@ -189,12 +230,23 @@ const GameCanvas: React.FC<GameCanvasProps> = ({ status, score, onScoreUpdate, o
       if (bat.throwingTimer > 0) bat.throwingTimer--;
     });
 
-    // Update Rockets with Free Fall Physics
+    // Update Rockets with Controlled Movement and Behaviors
     rocketsRef.current = rocketsRef.current.filter(rocket => {
-      rocket.vy += GRAVITY;
-      rocket.x += rocket.vx;
-      rocket.y += rocket.vy;
-      rocket.angle = Math.atan2(rocket.vy, rocket.vx);
+      if (rocket.hoverTimer && rocket.hoverTimer > 0) {
+        rocket.hoverTimer--;
+        // Gentle drift and wobble while hovering
+        rocket.x += (rocket.driftX || 0);
+        rocket.y += Math.sin(Date.now() / 800) * 0.15;
+      } else {
+        // Linear movement for consistent slow speed
+        rocket.x += rocket.vx;
+        rocket.y += rocket.vy;
+        
+        // Add a bit of "sway" to the descent
+        rocket.x += Math.sin(Date.now() / 1200) * 0.1;
+        
+        rocket.angle = Math.atan2(rocket.vy, rocket.vx);
+      }
 
       // Add exhaust particles
       if (Math.random() < 0.3) {
@@ -215,24 +267,27 @@ const GameCanvas: React.FC<GameCanvasProps> = ({ status, score, onScoreUpdate, o
           radius: 0,
           maxRadius: 40,
           expanding: true,
+          kills: 0,
           type: 'IMPACT'
         });
         audioManager.playExplosion();
 
-        citiesRef.current.forEach(city => {
-          if (city.active && Math.abs(city.x - rocket.targetX) < 20 && Math.abs(city.y - rocket.targetY) < 20) {
-            city.active = false;
-          }
-        });
-        batteriesRef.current.forEach(bat => {
-          if (bat.active && Math.abs(bat.x - rocket.targetX) < 20 && Math.abs(bat.y - rocket.targetY) < 20) {
-            bat.active = false;
-            onAmmoUpdate([...batteriesRef.current]);
-          }
-        });
+        if (status === 'PLAYING') {
+          citiesRef.current.forEach(city => {
+            if (city.active && Math.abs(city.x - rocket.targetX) < 20 && Math.abs(city.y - rocket.targetY) < 20) {
+              city.active = false;
+            }
+          });
+          batteriesRef.current.forEach(bat => {
+            if (bat.active && Math.abs(bat.x - rocket.targetX) < 20 && Math.abs(bat.y - rocket.targetY) < 20) {
+              bat.active = false;
+              onAmmoUpdate([...batteriesRef.current]);
+            }
+          });
 
-        if (batteriesRef.current.every(b => !b.active)) {
-          onGameEnd(false);
+          if (batteriesRef.current.every(b => !b.active)) {
+            onGameEnd(false);
+          }
         }
         return false;
       }
@@ -251,16 +306,32 @@ const GameCanvas: React.FC<GameCanvasProps> = ({ status, score, onScoreUpdate, o
       missile.y = linearY - Math.sin(Math.PI * missile.progress) * arcHeight;
 
       if (missile.progress >= 1) {
-        explosionsRef.current.push({
-          id: `exp-${Math.random()}`,
-          x: missile.targetX,
-          y: missile.targetY,
-          radius: 0,
-          maxRadius: 80, // Larger explosion for easier hits
-          expanding: true,
-          type: 'POOP'
+        // Check for hits manually since we're not creating a visual explosion
+        const hitRadius = 80;
+        let hitAny = false;
+        let killsCount = 0;
+        
+        rocketsRef.current = rocketsRef.current.filter(rocket => {
+          if (killsCount >= 2) return true; // Limit to 2 kills per poop
+
+          const dx = rocket.x - missile.targetX;
+          const dy = rocket.y - missile.targetY;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+          
+          if (dist < hitRadius + 25) {
+            onScoreUpdate(20);
+            createFirework(rocket.x, rocket.y);
+            hitAny = true;
+            killsCount++;
+            return false;
+          }
+          return true;
         });
-        audioManager.playExplosion();
+
+        if (hitAny) {
+          audioManager.playExplosion();
+        }
+        
         return false;
       }
       return true;
@@ -289,12 +360,15 @@ const GameCanvas: React.FC<GameCanvasProps> = ({ status, score, onScoreUpdate, o
       }
 
       rocketsRef.current = rocketsRef.current.filter(rocket => {
+        if (exp.kills >= 2) return true; // Limit to 2 kills per explosion
+
         const dx = rocket.x - exp.x;
         const dy = rocket.y - exp.y;
         const dist = Math.sqrt(dx * dx + dy * dy);
         // Larger collision buffer for easier hits
         if (dist < exp.radius + 25) {
           onScoreUpdate(20);
+          exp.kills++;
           createFirework(rocket.x, rocket.y); // Trigger firework on hit
           return false;
         }
@@ -303,10 +377,6 @@ const GameCanvas: React.FC<GameCanvasProps> = ({ status, score, onScoreUpdate, o
 
       return exp.radius > 0 || (exp.particles && exp.particles.length > 0);
     });
-
-    if (score >= 1000) {
-      onGameEnd(true);
-    }
   };
 
   const drawCloud = (ctx: CanvasRenderingContext2D, x: number, y: number, size: number) => {

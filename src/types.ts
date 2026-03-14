@@ -16,6 +16,8 @@ export interface Rocket extends Entity {
   vy: number;
   angle: number;
   exhaust: { x: number; y: number; opacity: number }[];
+  hoverTimer?: number;
+  driftX?: number;
 }
 
 export interface Missile extends Entity {
@@ -32,6 +34,7 @@ export interface Explosion extends Entity {
   radius: number;
   maxRadius: number;
   expanding: boolean;
+  kills: number;
   type?: 'POOP' | 'FIREWORK' | 'IMPACT';
   color?: string;
   particles?: { x: number; y: number; vx: number; vy: number; life: number; color: string }[];

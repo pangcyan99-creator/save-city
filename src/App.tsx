@@ -16,7 +16,10 @@ const translations = {
     playAgain: "PLAY AGAIN",
     instructions: "Click to throw poop! Protect your buildings and kittens!",
     ammo: "POOP",
-    lang: "中文"
+    lang: "中文",
+    level: "LEVEL",
+    nextLevel: "NEXT LEVEL",
+    levelComplete: "LEVEL COMPLETE!"
   },
   zh: {
     title: "保卫宇宙",
@@ -28,7 +31,10 @@ const translations = {
     playAgain: "再玩一次",
     instructions: "点击屏幕让小猫扔粑粑。保护你的建筑和小猫！",
     ammo: "粑粑",
-    lang: "EN"
+    lang: "EN",
+    level: "关卡",
+    nextLevel: "进入下一关",
+    levelComplete: "关卡完成！"
   }
 };
 
@@ -45,13 +51,22 @@ export default function App() {
   const t = translations[gameState.language];
 
   const handleScoreUpdate = (points: number) => {
-    setGameState(prev => ({ ...prev, score: prev.score + points }));
+    setGameState(prev => {
+      const newScore = prev.score + points;
+      const targetScore = prev.level * 500; // Each level requires 500 more points
+      
+      if (newScore >= targetScore && prev.status === 'PLAYING') {
+        audioManager.playWin();
+        return { ...prev, score: newScore, status: 'WON' };
+      }
+      
+      return { ...prev, score: newScore };
+    });
   };
 
   const handleGameEnd = (win: boolean) => {
     if (win) {
-      setGameState(prev => ({ ...prev, status: 'WON' }));
-      audioManager.playWin();
+      // This is now handled in handleScoreUpdate for level progression
     } else {
       setGameState(prev => ({ ...prev, status: 'LOST' }));
       audioManager.playLose();
@@ -59,7 +74,21 @@ export default function App() {
   };
 
   const startGame = () => {
-    setGameState(prev => ({ ...prev, status: 'PLAYING', score: 0 }));
+    setGameState(prev => ({ 
+      ...prev, 
+      status: 'PLAYING', 
+      score: 0,
+      level: 1 
+    }));
+  };
+
+  const startNextLevel = () => {
+    setGameState(prev => ({
+      ...prev,
+      status: 'PLAYING',
+      score: 0,
+      level: prev.level + 1
+    }));
   };
 
   const toggleLanguage = () => {
@@ -76,7 +105,7 @@ export default function App() {
             {t.title}
           </div>
           <div className="text-sm opacity-70">
-            {t.score}: <span className="text-yellow-400 font-bold">{gameState.score}</span> / {t.target}: 1000
+            {t.level}: <span className="text-blue-400 font-bold">{gameState.level}</span> | {t.score}: <span className="text-yellow-400 font-bold">{gameState.score}</span> / {t.target}: {gameState.level * 500}
           </div>
         </div>
 
@@ -112,6 +141,7 @@ export default function App() {
         <GameCanvas 
           status={gameState.status}
           score={gameState.score}
+          level={gameState.level}
           onScoreUpdate={handleScoreUpdate}
           onGameEnd={handleGameEnd}
           onAmmoUpdate={setBatteries}
@@ -161,16 +191,16 @@ export default function App() {
                 <>
                   <Trophy size={80} className="text-yellow-500 mx-auto mb-6" />
                   <h2 className="text-5xl font-black mb-2 text-yellow-400 italic">
-                    {t.win}
+                    {t.levelComplete}
                   </h2>
                   <p className="text-2xl mb-8">
                     {t.score}: {gameState.score}
                   </p>
                   <button 
-                    onClick={startGame}
+                    onClick={startNextLevel}
                     className="bg-white text-black hover:bg-gray-200 px-8 py-4 rounded-xl font-bold text-lg transition-all hover:scale-105 active:scale-95"
                   >
-                    {t.playAgain}
+                    {t.nextLevel}
                   </button>
                 </>
               )}
