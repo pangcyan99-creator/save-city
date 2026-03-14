@@ -23,7 +23,7 @@ const GameCanvas: React.FC<GameCanvasProps> = ({ status, score, onScoreUpdate, o
   
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
 
-  const GRAVITY = 0.01; // Reduced gravity further for slower fall
+  const GRAVITY = 0.005; // Even lower gravity for very slow fall
 
   // Initialize game objects
   const initGame = (width: number, height: number) => {
@@ -69,6 +69,13 @@ const GameCanvas: React.FC<GameCanvasProps> = ({ status, score, onScoreUpdate, o
     return () => window.removeEventListener('resize', handleResize);
   }, [status]);
 
+  useEffect(() => {
+    if (status === 'PLAYING') {
+      // Spawn first rocket immediately
+      spawnRocket();
+    }
+  }, [status]);
+
   const spawnRocket = () => {
     if (status !== 'PLAYING') return;
     const startX = Math.random() * dimensions.width;
@@ -78,10 +85,10 @@ const GameCanvas: React.FC<GameCanvasProps> = ({ status, score, onScoreUpdate, o
     
     const target = targets[Math.floor(Math.random() * targets.length)];
     
-    // Slower flight time (Increased by ~50% from previous)
-    const minT = 800; 
-    const maxT = 1600; 
-    const scoreFactor = Math.min(score / 4000, 1);
+    // Much slower flight time
+    const minT = 1200; 
+    const maxT = 2400; 
+    const scoreFactor = Math.min(score / 5000, 1);
     const T = (maxT - (maxT - minT) * scoreFactor) * (0.9 + Math.random() * 0.2);
 
     const vx = (target.x - startX) / T;
@@ -173,7 +180,7 @@ const GameCanvas: React.FC<GameCanvasProps> = ({ status, score, onScoreUpdate, o
   const update = (time: number) => {
     if (status !== 'PLAYING') return;
 
-    if (Math.random() < 0.01 + (score / 20000)) {
+    if (Math.random() < 0.02 + (score / 15000)) {
       spawnRocket();
     }
 
